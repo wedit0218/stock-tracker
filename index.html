@@ -2921,95 +2921,9 @@ function isMarketOpen() {
   return isTradingDay() && mins >= 9*60 && mins <= 13*60+35;
 }
 
-async function fetchAllPrices() {
-  if (!GAS_URL) return;
-  const now = Date.now();
-  if (now - _lastFetch < FETCH_INTERVAL && _lastFetch > 0) return;
-  _lastFetch = now;
 
-  // 只收集「目前勾選顯示」的分類個股代碼，減少請求量
-  const visibleCodes = new Set();
-  const allCodes = new Set();
-  for (const [key, obj] of Object.entries(STOCKS)) {
-    for (const s of (obj.stocks || [])) {
-      allCodes.add(s.code);
-      if (VIS[key]) visibleCodes.add(s.code); // 只有勾選的才優先更新
-    }
-  }
+// fetchAllPrices 已由帶進度條的新版取代
 
-  const BATCH = 80;
-
-  // Step 1: 立即取大盤+股價（fast mode，不含VIX/法人，最快）
-  // 強制包含頂部4檔個股（確保連動更新）
-  const topCodes = ['2330','2454','2317','2308'];
-  const firstBatchSet = new Set([...topCodes, ...[...visibleCodes].slice(0, BATCH - topCodes.length)]);
-  const firstBatch = [...firstBatchSet].slice(0, BATCH);
-  try {
-    const url = `${GAS_URL}?action=fast&codes=${firstBatch.join(',')}`;
-    const res = await fetch(url, { signal: createAbortSignal(10000) });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.prices) { Object.assign(PX, data.prices); Object.assign(_priceCache, data.prices); }
-      if (data.index) updateIndexBar(data.index);
-      updateRenderedCards();
-      updateTopStocks();
-    }
-  } catch(e) { console.warn('首批 GAS 失敗:', e.message); }
-
-  // Step 1b: 背景非同步取法人+VIX（不阻塞股價顯示）
-  setTimeout(async () => {
-    try {
-      const r = await fetch(`${GAS_URL}?action=vix`, { signal: createAbortSignal(12000) });
-      if (r.ok) { const d = await r.json(); if (d.vix?.val > 0) { vixData = d.vix; updateVixUI(d.vix.val, d.vix.chg||''); } }
-    } catch(e) {}
-    try {
-      const r2 = await fetch(`${GAS_URL}?action=inst`, { signal: createAbortSignal(10000) });
-      if (r2.ok) { const d2 = await r2.json(); if (d2.inst?.date) { Object.assign(INST, d2.inst); renderInstBar(); } }
-    } catch(e) {}
-  }, 500);
-
-  // Step 2: 並行抓剩餘可見個股（不等待完成）
-  const remaining = [...visibleCodes].slice(BATCH);
-  const batches = [];
-  for (let i = 0; i < remaining.length; i += BATCH) {
-    batches.push(remaining.slice(i, i + BATCH));
-  }
-
-  // 並行請求（最多同時4個，避免GAS過載）
-  const CONCURRENT = 4;
-  for (let i = 0; i < batches.length; i += CONCURRENT) {
-    const chunk = batches.slice(i, i + CONCURRENT);
-    await Promise.allSettled(chunk.map(async batch => {
-      try {
-        const res = await fetch(`${GAS_URL}?action=prices&codes=${batch.join(',')}`, { signal: createAbortSignal(12000) });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.prices) { Object.assign(PX, data.prices); Object.assign(_priceCache, data.prices); }
-      } catch(e) {}
-    }));
-    // 每輪完成後更新畫面
-    updateRenderedCards();
-    updateTopStocks();
-  }
-
-  // Step 3: 背景靜默更新非顯示個股（不影響 UI）
-  const hiddenCodes = [...allCodes].filter(c => !visibleCodes.has(c));
-  setTimeout(async () => {
-    for (let i = 0; i < hiddenCodes.length; i += BATCH) {
-      const batch = hiddenCodes.slice(i, i + BATCH);
-      try {
-        const res = await fetch(`${GAS_URL}?action=prices&codes=${batch.join(',')}`, { signal: createAbortSignal(10000) });
-        if (res.ok) { const d = await res.json(); if (d.prices) Object.assign(PX, d.prices); }
-      } catch(e) {}
-      await new Promise(r => setTimeout(r, 200)); // 稍作間隔，避免GAS限流
-    }
-    savePriceCache();
-    console.log('✅ 背景更新完成，全部股價已快取');
-  }, 3000); // 3秒後才開始背景更新
-
-  savePriceCache();
-  console.log(`✅ 可見個股更新完成 ${new Date().toLocaleTimeString('zh-TW')}`);
-}
 
 
 // 直接更新畫面上已存在卡片的股價，不重新渲染整個列表
@@ -7917,7 +7831,6 @@ function isAfterClose() {
 }
 
 // ── 覆寫 fetchAllPrices 加入進度回報 ──
-const _origFetchAllPrices = fetchAllPrices;
 async function fetchAllPrices() {
   if (!GAS_URL) return;
   const now = Date.now();
@@ -7975,8 +7888,13 @@ async function fetchAllPrices() {
 
   showProgress('更新 VIX / 法人...', 20);
 
-  // Step 1b: VIX + 法人
+  // Step 1b: 大盤指數（備援）+ VIX + 法人
   setTimeout(async () => {
+    // 單獨更新大盤（確保一定更新到）
+    try {
+      const ri = await fetch(`${GAS_URL}?action=index`, { signal: createAbortSignal(8000) });
+      if (ri.ok) { const di = await ri.json(); if (di.index) updateIndexBar(di.index); }
+    } catch(e) {}
     try {
       const r = await fetch(`${GAS_URL}?action=vix`, { signal: createAbortSignal(12000) });
       if (r.ok) { const d = await r.json(); if (d.vix?.val > 0) { vixData = d.vix; updateVixUI(d.vix.val, d.vix.chg||''); } }
@@ -8013,8 +7931,8 @@ async function fetchAllPrices() {
     updateTopStocks();
   }
 
-  showProgress('收尾處理...', 90);
   savePriceCache();
+  showProgress('完成！', 100);
 
   // 收盤後：顯示儲存提示，不再繼續背景更新
   if (afterClose) {
@@ -8034,10 +7952,12 @@ async function fetchAllPrices() {
         const res = await fetch(`${GAS_URL}?action=prices&codes=${batch.join(',')}`, { signal: createAbortSignal(10000) });
         if (res.ok) { const d = await res.json(); if (d.prices) Object.assign(PX, d.prices); }
       } catch(e) {}
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, 200));
     }
     savePriceCache();
-  }, 3000);
+    updateRenderedCards();
+    updateTopStocks();
+  }, 2000);
 }
 
 </script>
