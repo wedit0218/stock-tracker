@@ -1319,6 +1319,36 @@ html,body{background:var(--bg);color:var(--t1);font-size:var(--fs);
   color:#f0b429;font-weight:700;
 }
 
+
+/* ── 載入進度條 ── */
+.load-progress-bar{
+  position:fixed;top:0;left:0;height:3px;z-index:9999;
+  background:linear-gradient(90deg,var(--br),#40d080);
+  transition:width .3s ease;border-radius:0 2px 2px 0;
+  box-shadow:0 0 8px rgba(64,208,128,.4);
+}
+.load-status-toast{
+  position:fixed;bottom:calc(20px + env(safe-area-inset-bottom));
+  left:50%;transform:translateX(-50%);z-index:9998;
+  background:var(--sf2);border:1px solid var(--bo2);border-radius:var(--r);
+  padding:8px 18px;font-size:var(--fsm);color:var(--t2);
+  display:flex;align-items:center;gap:10px;
+  box-shadow:0 4px 20px rgba(0,0,0,.4);
+  transition:opacity .3s;white-space:nowrap;
+}
+.load-status-toast.hide{opacity:0;pointer-events:none;}
+.load-spinner{
+  width:14px;height:14px;border:2px solid var(--bo2);
+  border-top-color:#40d080;border-radius:50%;
+  animation:spin .8s linear infinite;flex-shrink:0;
+}
+/* 收盤模式橫幅 */
+.close-mode-banner{
+  background:rgba(64,208,128,.08);border-bottom:1px solid rgba(64,208,128,.2);
+  padding:5px var(--p);font-size:var(--fss);color:#40d080;
+  display:flex;align-items:center;gap:8px;flex-shrink:0;
+}
+
 </style>
 </head>
 <body>
@@ -1420,6 +1450,14 @@ html,body{background:var(--bg);color:var(--t1);font-size:var(--fs);
 
 <!-- ── Market strip ── -->
 <!-- ══ 市場事件警示橫幅（事件前2日自動顯示）══ -->
+
+<div class="load-progress-bar" id="loadProgressBar" style="width:0%"></div>
+<div class="load-status-toast hide" id="loadStatusToast">
+  <div class="load-spinner" id="loadSpinner"></div>
+  <span id="loadStatusText">初始化...</span>
+  <span id="loadProgressPct" style="color:#40d080;font-weight:600;min-width:32px;text-align:right;">0%</span>
+</div>
+
 <div class="event-banner" id="eventBanner" onclick="openEventCalendar()">
   <span class="ev-icon" id="evIcon">⚠️</span>
   <div class="ev-text">
@@ -2902,7 +2940,10 @@ async function fetchAllPrices() {
   const BATCH = 80;
 
   // Step 1: 立即取大盤+股價（fast mode，不含VIX/法人，最快）
-  const firstBatch = [...visibleCodes].slice(0, BATCH);
+  // 強制包含頂部4檔個股（確保連動更新）
+  const topCodes = ['2330','2454','2317','2308'];
+  const firstBatchSet = new Set([...topCodes, ...[...visibleCodes].slice(0, BATCH - topCodes.length)]);
+  const firstBatch = [...firstBatchSet].slice(0, BATCH);
   try {
     const url = `${GAS_URL}?action=fast&codes=${firstBatch.join(',')}`;
     const res = await fetch(url, { signal: createAbortSignal(10000) });
@@ -7834,6 +7875,170 @@ setTimeout(() => {
   const main = document.getElementById('main');
   if (main) observer.observe(main, { childList: true, subtree: false });
 }, 1000);
+
+
+
+// ══════════════════════════════════════════════════════════════
+// 載入進度條系統 + 收盤模式
+// ══════════════════════════════════════════════════════════════
+
+let _loadTotal = 0, _loadDone = 0;
+
+function showProgress(text, pct) {
+  const bar   = document.getElementById('loadProgressBar');
+  const toast = document.getElementById('loadStatusToast');
+  const txt   = document.getElementById('loadStatusText');
+  const pctEl = document.getElementById('loadProgressPct');
+  if (!bar) return;
+  bar.style.width = pct + '%';
+  if (toast) toast.classList.remove('hide');
+  if (txt) txt.textContent = text;
+  if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+}
+
+function hideProgress() {
+  const bar   = document.getElementById('loadProgressBar');
+  const toast = document.getElementById('loadStatusToast');
+  const spin  = document.getElementById('loadSpinner');
+  if (bar) { bar.style.width = '100%'; setTimeout(() => { bar.style.opacity='0'; }, 600); }
+  if (toast) { setTimeout(() => toast.classList.add('hide'), 1500); }
+  if (spin) spin.style.display = 'none';
+}
+
+// ── 判斷是否為收盤後模式（18:00後或假日）──
+function isAfterClose() {
+  const now = new Date();
+  const h = now.getHours(), m = now.getMinutes();
+  const day = now.getDay(); // 0=日, 6=六
+  if (day === 0 || day === 6) return true;   // 週末
+  if (h >= 18) return true;                  // 18:00後
+  if (h < 9) return true;                    // 9:00前
+  return false;
+}
+
+// ── 覆寫 fetchAllPrices 加入進度回報 ──
+const _origFetchAllPrices = fetchAllPrices;
+async function fetchAllPrices() {
+  if (!GAS_URL) return;
+  const now = Date.now();
+  if (now - _lastFetch < FETCH_INTERVAL && _lastFetch > 0) return;
+  _lastFetch = now;
+
+  // 收集可見個股
+  const visibleCodes = new Set();
+  const allCodes = new Set();
+  for (const [key, obj] of Object.entries(STOCKS)) {
+    for (const s of (obj.stocks || [])) {
+      allCodes.add(s.code);
+      if (VIS[key]) visibleCodes.add(s.code);
+    }
+  }
+
+  const BATCH = 80;
+  const topCodes = ['2330','2454','2317','2308'];
+  const firstBatchSet = new Set([...topCodes, ...[...visibleCodes].slice(0, BATCH - topCodes.length)]);
+  const firstBatch = [...firstBatchSet].slice(0, BATCH);
+  const remaining = [...visibleCodes].filter(c => !firstBatchSet.has(c));
+  const hiddenCodes = [...allCodes].filter(c => !visibleCodes.has(c));
+
+  const totalCodes = visibleCodes.size;
+  let doneCodes = 0;
+
+  const afterClose = isAfterClose();
+
+  // 顯示收盤模式提示
+  if (afterClose && !document.getElementById('closeBanner')) {
+    const banner = document.createElement('div');
+    banner.id = 'closeBanner';
+    banner.className = 'close-mode-banner';
+    banner.innerHTML = '<i class="ti ti-moon"></i> 收盤後模式：更新一次後自動停止，完成後可儲存';
+    const instBar = document.querySelector('.inst-bar');
+    if (instBar) instBar.parentNode.insertBefore(banner, instBar);
+  }
+
+  showProgress('連線 GAS 中...', 3);
+
+  // Step 1: 第一批（快速）
+  try {
+    showProgress(`更新頂部+主要個股（${firstBatch.length}檔）...`, 10);
+    const url = `${GAS_URL}?action=fast&codes=${firstBatch.join(',')}`;
+    const res = await fetch(url, { signal: createAbortSignal(10000) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.prices) { Object.assign(PX, data.prices); Object.assign(_priceCache, data.prices); }
+      if (data.index) updateIndexBar(data.index);
+      updateRenderedCards();
+      updateTopStocks();
+      doneCodes += firstBatch.length;
+    }
+  } catch(e) { console.warn('首批失敗:', e.message); }
+
+  showProgress('更新 VIX / 法人...', 20);
+
+  // Step 1b: VIX + 法人
+  setTimeout(async () => {
+    try {
+      const r = await fetch(`${GAS_URL}?action=vix`, { signal: createAbortSignal(12000) });
+      if (r.ok) { const d = await r.json(); if (d.vix?.val > 0) { vixData = d.vix; updateVixUI(d.vix.val, d.vix.chg||''); } }
+    } catch(e) {}
+    try {
+      const r2 = await fetch(`${GAS_URL}?action=inst`, { signal: createAbortSignal(10000) });
+      if (r2.ok) { const d2 = await r2.json(); if (d2.inst?.date) { Object.assign(INST, d2.inst); renderInstBar(); } }
+    } catch(e) {}
+  }, 500);
+
+  // Step 2: 剩餘可見個股並行
+  const CONCURRENT = 4;
+  const batches = [];
+  for (let i = 0; i < remaining.length; i += BATCH) batches.push(remaining.slice(i, i+BATCH));
+
+  const totalBatches = batches.length;
+  let batchDone = 0;
+
+  for (let i = 0; i < batches.length; i += CONCURRENT) {
+    const chunk = batches.slice(i, i + CONCURRENT);
+    await Promise.allSettled(chunk.map(async batch => {
+      try {
+        const res = await fetch(`${GAS_URL}?action=prices&codes=${batch.join(',')}`, { signal: createAbortSignal(12000) });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.prices) { Object.assign(PX, data.prices); Object.assign(_priceCache, data.prices); }
+      } catch(e) {}
+    }));
+    batchDone += chunk.length;
+    doneCodes += chunk.reduce((s, b) => s + b.length, 0);
+    const pct = 20 + (batchDone / Math.max(totalBatches, 1)) * 60;
+    showProgress(`更新個股 ${Math.min(doneCodes, totalCodes)}/${totalCodes} 檔...`, pct);
+    updateRenderedCards();
+    updateTopStocks();
+  }
+
+  showProgress('收尾處理...', 90);
+  savePriceCache();
+
+  // 收盤後：顯示儲存提示，不再繼續背景更新
+  if (afterClose) {
+    hideProgress();
+    showSaveNotice();
+    console.log('✅ 收盤後模式完成，已顯示儲存提示');
+    return; // 不做背景更新
+  }
+
+  // 盤中：背景更新非顯示個股
+  hideProgress();
+  setTimeout(async () => {
+    const needed = hiddenCodes;
+    for (let i = 0; i < needed.length; i += BATCH) {
+      const batch = needed.slice(i, i+BATCH);
+      try {
+        const res = await fetch(`${GAS_URL}?action=prices&codes=${batch.join(',')}`, { signal: createAbortSignal(10000) });
+        if (res.ok) { const d = await res.json(); if (d.prices) Object.assign(PX, d.prices); }
+      } catch(e) {}
+      await new Promise(r => setTimeout(r, 300));
+    }
+    savePriceCache();
+  }, 3000);
+}
 
 </script>
 
