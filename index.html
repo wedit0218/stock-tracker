@@ -766,6 +766,7 @@ html,body{background:var(--bg);color:var(--t1);font-size:var(--fs);
 
 /* 主題卡片 */
 .tc{background:var(--sf);border:1px solid var(--bo);border-radius:var(--r);overflow:hidden;}
+.tc .ts-grid{padding:10px 12px;}
 .tc-hdr{
   padding:12px 16px;border-bottom:1px solid var(--bo);
   display:flex;align-items:flex-start;justify-content:space-between;gap:var(--g);
@@ -779,14 +780,25 @@ html,body{background:var(--bg);color:var(--t1);font-size:var(--fs);
 .tc-acts{display:flex;gap:6px;flex-shrink:0;}
 
 /* 個股行 */
-.ts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:var(--gsm);padding:12px 16px;}
+.ts-grid{
+  display:flex;flex-direction:row;gap:10px;padding:12px 14px;
+  overflow-x:auto;overflow-y:hidden;
+  -webkit-overflow-scrolling:touch;align-items:flex-start;
+}
+.ts-grid::-webkit-scrollbar{height:5px;}
+.ts-grid::-webkit-scrollbar-track{background:var(--bg3);}
+.ts-grid::-webkit-scrollbar-thumb{background:var(--bo2);border-radius:3px;}
 .ts-card{
   background:var(--bg3);border:1px solid var(--bo);border-radius:var(--r);
-  padding:12px 14px;display:flex;flex-direction:column;gap:8px;
+  padding:10px 12px;display:flex;flex-direction:column;gap:6px;
   position:relative;transition:all .13s;cursor:pointer;
 }
 .ts-card:hover{border-color:#40d080;box-shadow:0 0 12px rgba(64,208,128,.15);}
-.ts-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.ts-card{width:270px;min-width:270px;height:400px;flex-shrink:0;overflow:hidden;}
+.ts-card-inner{flex:1;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:6px;min-height:0;}
+.ts-card-inner::-webkit-scrollbar{width:3px;}
+.ts-card-inner::-webkit-scrollbar-thumb{background:var(--bo2);border-radius:2px;}
+.ts-card-top{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-shrink:0;}
 .ts-meta{display:flex;align-items:center;gap:7px;min-width:0;}
 .ts-code{font-family:'Courier New',monospace;font-size:10px;font-weight:700;
   padding:2px 6px;border-radius:3px;background:var(--sf2);border:1px solid var(--bo2);color:var(--t3);}
@@ -806,27 +818,27 @@ html,body{background:var(--bg);color:var(--t1);font-size:var(--fs);
 .tg-avoid{background:rgba(120,120,120,.12);color:var(--t4);border:1px solid var(--bo);}
 
 /* 個人見解 */
-.ts-analysis{font-size:var(--fsm);color:var(--t2);line-height:1.65;padding:6px 8px;
+.ts-analysis{font-size:12px;color:var(--t2);line-height:1.55;padding:5px 8px;
   background:var(--sf);border-radius:var(--rs);border-left:2px solid var(--bo2);}
 .ts-analysis.bull-view{border-left-color:var(--up);}
 .ts-analysis.bear-view{border-left-color:var(--dn);}
 
 /* 觀察條件 */
-.ts-conds{display:flex;flex-wrap:wrap;gap:4px;}
+.ts-conds{display:flex;flex-wrap:wrap;gap:3px;}
 .ts-cond{
-  font-size:var(--fss);padding:3px 8px;border-radius:var(--rs);
+  font-size:10px;padding:2px 6px;border-radius:var(--rs);
   background:var(--sf2);border:1px solid var(--bo);color:var(--t2);
-  display:flex;align-items:center;gap:4px;
+  display:flex;align-items:center;gap:3px;
 }
 .ts-cond.triggered{background:rgba(255,77,77,.12);border-color:rgba(255,77,77,.35);color:var(--up);}
 .ts-cond.triggered::before{content:'🔔';font-size:10px;}
 
 /* 目標價 */
-.ts-targets{display:flex;gap:8px;font-size:var(--fss);}
+.ts-targets{display:flex;gap:5px;font-size:10px;flex-wrap:wrap;}
 .tst-item{display:flex;flex-direction:column;gap:2px;
   padding:4px 8px;background:var(--sf2);border-radius:var(--rs);border:1px solid var(--bo);}
 .tst-label{color:var(--t4);font-size:9px;letter-spacing:.04em;}
-.tst-val{font-weight:600;font-variant-numeric:tabular-nums;}
+.tst-val{font-weight:600;font-variant-numeric:tabular-nums;font-size:11px;}
 
 /* Modal */
 .theme-modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--g);}
@@ -5634,6 +5646,7 @@ function renderThemeCard(t) {
           <span class="ts-grade ${gradeMap[s.grade]||'tg-watch'}">${gradeLbl[s.grade]||s.grade}</span>
         </div>
       </div>
+      <div class="ts-card-inner">
       ${s.analysis ? `<div class="ts-analysis ${viewCls}">${s.analysis}</div>` : ''}
       ${s.extraData ? `<div class="ts-targets" style="flex-wrap:wrap;">
         ${s.extraData.pe != null ? `<div class="tst-item"><div class="tst-label">本益比</div><div class="tst-val">${s.extraData.pe}x</div></div>` : ''}
@@ -5652,8 +5665,8 @@ function renderThemeCard(t) {
         ${s.extraData.bigHolder ? `<div class="tst-item"><div class="tst-label">大戶動向</div><div class="tst-val col-up">✓ 增持</div></div>` : ''}
       </div>` : targetsHtml ? `<div class="ts-targets">${targetsHtml}</div>` : ''}
       ${condsHtml ? `<div class="ts-conds">${condsHtml}</div>` : ''}
-    </div>`;
-  }).join('');
+    </div></div>`;
+}).join('');
 
   // 若 stocks 有資料但 stocksHtml 是空的，用簡單清單兜底顯示
   const safeStocksHtml = stocksHtml || ((t.stocks||[]).length > 0 ?
