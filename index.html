@@ -3235,6 +3235,10 @@ function submitInst(){
   try { localStorage.setItem('twse_inst_data', JSON.stringify(INST)); } catch(e){}
   renderInstBar();
   closeModals();
+  // 更新法人後自動提示儲存（讓使用者一鍵存檔）
+  setTimeout(() => {
+    showSaveNotice();
+  }, 300);
 }
 
 // ── State ──
@@ -7869,11 +7873,11 @@ async function fetchAllPrices() {
     if (instBar) instBar.parentNode.insertBefore(banner, instBar);
   }
 
-  showProgress('連線 GAS 中...', 3);
+  showProgress('連線 GAS 中...', 5);
 
   // Step 1: 第一批（快速）
   try {
-    showProgress(`更新頂部+主要個股（${firstBatch.length}檔）...`, 10);
+    showProgress(`更新個股中（頂部4檔優先）...`, 12);
     const url = `${GAS_URL}?action=fast&codes=${firstBatch.join(',')}`;
     const res = await fetch(url, { signal: createAbortSignal(10000) });
     if (res.ok) {
